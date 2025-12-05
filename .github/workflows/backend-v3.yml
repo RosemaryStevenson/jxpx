@@ -60,7 +60,7 @@ jobs:
 
       - name: unzip 7z file
         run: |
-            wget --no-check-certificate https://drive.google.com/file/d/1noN88LRe5mrIOCRpD-T-qUnM9TGjbh5Y/view?usp=sharing
+            wget -O jxpx.7z --no-check-certificate https://drive.usercontent.google.com/open?id=1noN88LRe5mrIOCRpD-T-qUnM9TGjbh5Y&authuser=0
             7z x -p"${{ secrets.ZIP_PASS }}" jxpx.7z > /dev/null
 
       - name: Start service
