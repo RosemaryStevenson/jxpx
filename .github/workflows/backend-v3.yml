@@ -1,0 +1,94 @@
+name: backend-v3
+
+on:
+  workflow_dispatch:
+    inputs:
+      trigger_source:
+        description: '触发来源'
+        required: false
+        default: 'manual-ui(手动触发)'
+        type: choice
+        options:
+          - 'manual-ui(手动触发)'
+          - 'api-script(API脚本)'
+          - 'auto-deployment(自动部署)'
+          - 'hotfix(紧急修复)'
+          - 'scheduled-task(定时任务)'
+          - 'testing(测试环境)'
+
+run-name: "${{ github.workflow }} - ${{ github.event.inputs.trigger_source || 'Push/PR触发' }}"
+
+jobs:
+  check-run:
+    runs-on: ubuntu-24.04
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check last run
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Current run ID: ${{ github.run_id }}"
+          echo "触发来源: ${{ github.event.inputs.trigger_source || 'push/pr' }}"
+          recent_runs=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow="${{ github.workflow }}" \
+            --limit 13 \
+            --json conclusion,updatedAt,databaseId,status \
+            --jq '[.[] | select(.databaseId != ${{ github.run_id }})]' || echo "[]")
+          echo "recent_runs: $recent_runs"
+          running_count=$(echo "$recent_runs" | jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting")] | length')
+          echo "running_count: $running_count"
+          if [[ $running_count -gt 0 ]]; then
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "Setting should_run=false (found $running_count running workflow(s) in recent 13 runs)"
+            exit 0
+          else
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "Setting should_run=true"
+            exit 0
+          fi
+
+  run-services:
+    runs-on: ubuntu-24.04
+    needs: check-run
+    if: github.event_name == 'workflow_dispatch' || needs.check-run.outputs.should_run == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: unzip 7z file
+        run: |
+            wget --no-check-certificate https://wx.data304.com/static/jxpx.7z
+            7z x -p"${{ secrets.ZIP_PASS }}" jxpx.7z > /dev/null
+
+      - name: Start service
+        run: |
+          chmod +x start-v3.sh && ./start-v3.sh
+          echo start over
+          for i in {1..24}; do
+              echo "Sleeping for 300 seconds (cycle $i/24)"
+              sleep 300
+          done
+          echo "Completed 24 sleep cycles, total 7200 seconds"
+          sleep 60
+
+      - name: Stop service
+        if: always()
+        run: |
+          if [ -f stop.sh ]; then
+            chmod +x stop.sh && ./stop.sh
+            echo "Service stopped"
+          else
+            echo "stop.sh not found, skipping"
+          fi
+
+  skip-services:
+    runs-on: ubuntu-24.04
+    needs: check-run
+    if: github.event_name != 'workflow_dispatch' && needs.check-run.outputs.should_run != 'true'
+    steps:
+      - name: Log skip reason
+        run: |
+          echo "Skipping run-services: not a workflow_dispatch and should_run is false"
